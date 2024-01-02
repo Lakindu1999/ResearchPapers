@@ -1,1 +1,168 @@
+import cv2
+import imutils
+import numpy as np
+import argparse
+from imutils.object_detection import non_max_suppression
+from tracker import *
+import time
+import threading
+from pyfirmata import Arduino, util, STRING_DATA
+track = EuclideanDistTracker()
 
+#port = 'COM3'
+#board = Arduino(port)
+
+
+def gfg():
+    print("waiting Time : "+ time.strftime('%S'))
+
+def counts():
+    pass
+
+
+
+
+
+def coundownTimer():
+    start_time = time.time()
+    seconds = 20
+
+    while True:
+        current_time = time.time()
+        elapsed_time = current_time - start_time
+        wait_time = seconds - int(elapsed_time)
+        board.send_sysex(STRING_DATA, util.str_to_two_byte_iter("Cross the Road"))
+        print("Please cross the road within : " + str(wait_time) + " seconds")
+        board.send_sysex(STRING_DATA, util.str_to_two_byte_iter(str(wait_time)))
+        time.sleep(1)
+
+        if elapsed_time > seconds:
+            board.send_sysex(STRING_DATA, util.str_to_two_byte_iter("Stop and Waiting"))
+            board.send_sysex(STRING_DATA, util.str_to_two_byte_iter("****************"))
+            print("Stop and Waiting!!")  # After that we want to impliment the road crossing cowndown time on Arduino
+            end_time = time.time()
+            break
+    return end_time
+
+
+
+
+
+
+def waitTimer():
+    start_time = time.time()
+    seconds = 20
+
+    while True:
+        current_time = time.time()
+        elapsed_time = current_time - start_time
+        wait_time = seconds - int(elapsed_time)
+        board.send_sysex(STRING_DATA, util.str_to_two_byte_iter("Stop and Wait"))
+        print("waiting : " + str(wait_time) + " seconds")
+        board.send_sysex(STRING_DATA, util.str_to_two_byte_iter(str(wait_time)))
+        time.sleep(1)
+
+        if elapsed_time > seconds:
+            #board.send_sysex(STRING_DATA, util.str_to_two_byte_iter("Cross the road"))
+            print("You can cross the road !! ")# After that we want to impliment the road crossing cowndown time on Arduino
+            end_time = coundownTimer()
+            break
+    return end_time
+
+
+
+
+
+def detect(frame, count, end_time):
+    height, width, _ = frame.shape
+    roi = frame[250:450, 0:280]
+
+    bounding_box_cordinates, weights = HOGCV.detectMultiScale(roi, winStride=(4, 4), padding=(8, 8), scale=0.5)
+    person = 1
+
+    for x, y, w, h in bounding_box_cordinates:
+        cv2.rectangle(roi, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        cv2.putText(roi, f'person {person}', (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+        person = person + 1
+        next_call_time = time.time() - end_time
+
+        if (5 > person > 0) and next_call_time > 100:
+            end_time = waitTimer()
+
+        elif person >= 5 and (count == 0 or next_call_time > 50):
+            count = 1
+            end_time = waitTimer()
+
+
+    cv2.putText(frame, 'Status : Detecting ', (40, 40), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 0, 0), 2)
+    cv2.putText(frame, f'Detecting Persons : {person - 1}', (40, 70), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 0, 0), 2)
+    #cv2.putText(frame, "Total Persons :"+str(counter), (40, 100), cv2.FONT_HERSHEY_SIMPLEX,2,(0,0,255),2)
+    cv2.imshow('output', frame)
+    #cv2.imshow('Ex', roi)
+    return frame, count, end_time
+
+
+
+
+
+
+def detectByPathVideo(path, writer):
+    video = cv2.VideoCapture(path)
+    check, frame = video.read()
+    end_time = time.time()
+    count = 0
+    if check == False:
+        print('Video Not Found. Please Enter a Valid Path (Full path of Video Should be Provided).')
+        return
+
+    print('Detecting people...')
+    while video.isOpened():
+        # check is True if reading was successful
+        check, frame = video.read()
+        if check:
+            frame = imutils.resize(frame, width=min(800, frame.shape[1]))
+            if count == 0 or count > 0:
+                frame, count, end_time = detect(frame, count, end_time)
+
+                if writer is not None:
+                    writer.write(frame)
+
+                key = cv2.waitKey(1)
+                if key == ord('q'):
+                    break
+            else:
+                continue
+        else:
+            break
+    video.release()
+    cv2.destroyAllWindows()
+
+
+def ouput_path(args):
+    pass
+
+
+def humanDetector(args):
+    video_path = args['video']
+    writer = None
+
+    if video_path is not None:
+        print('[INFO] Opening Video from path.')
+        detectByPathVideo(video_path, writer)
+
+
+def argsParser():
+    arg_parse = argparse.ArgumentParser()
+    arg_parse.add_argument("-v", "--video", default=None, help="'../cctv02.avi'")
+    arg_parse.add_argument("-o", "--output", type=str, help="path to optional output video file")
+    args = vars(arg_parse.parse_args())
+
+    return args
+
+
+if __name__ == "__main__":
+    HOGCV = cv2.HOGDescriptor()
+    HOGCV.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+
+    args = argsParser()
+    humanDetector(args)
